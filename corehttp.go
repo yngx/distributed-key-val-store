@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -33,12 +34,44 @@ func keyValuePutHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated) // All good! Return StatusCreated
 }
 
+func keyValueGetHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	key := vars["key"]
+
+	value, err := Get(key)
+	if errors.Is(err, ErrorNoSuchKey) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte(value)) // Write the value to the response
+}
+
+func keyValueDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	key := vars["key"]
+
+	err := Delete(key)
+	if err != nil { // If we have an error, report it
+		http.Error(w,
+			err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func main() {
 	r := mux.NewRouter()
 
-	// Register keyValuePutHandler as the handler function for PUT
-	// requests matching "/v1/{key}"
 	r.HandleFunc("/v1/{key}", keyValuePutHandler).Methods("PUT")
+	r.HandleFunc("/v1/{key}", keyValueGetHandler).Methods("GET")
+	r.HandleFunc("/v1/{key}", keyValueDeleteHandler).Methods("DELETE")
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
