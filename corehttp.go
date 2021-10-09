@@ -2,12 +2,43 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
 )
+
+var logger TransactionLogger
+
+func initializeTransactionLog() error {
+	var err error
+	logger, err = NewFileTransactionLogger("transaction.log")
+	if err != nil {
+		return fmt.Errorf("failed to create event logger: %w", err)
+	}
+
+	events, errors := logger.ReadEvents()
+	e, ok := Event{}, true
+
+	for ok && err == nil {
+		select {
+		case err, ok = <-errors: // Retrieve any errors
+		case e, ok = <-events:
+			switch e.EventType {
+			case EventDelete: // Got a DELETE event!
+				err = Delete(e.Key)
+			case EventPut: // Got a PUT event!
+				err = Put(e.Key, e.Value)
+			}
+		}
+	}
+
+	logger.Run()
+
+	return err
+}
 
 func keyValuePutHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r) // retrieve key from the request
@@ -30,6 +61,8 @@ func keyValuePutHandler(w http.ResponseWriter, r *http.Request) {
 			http.StatusInternalServerError)
 		return
 	}
+
+	logger.WritePut(key, string(value))
 
 	w.WriteHeader(http.StatusCreated) // All good! Return StatusCreated
 }
@@ -63,10 +96,19 @@ func keyValueDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger.WriteDelete(key)
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func main() {
+	// Initializes the transaction log and loads existing data, if any.
+	// Blocks until all data is read.
+	err := initializeTransactionLog()
+	if err != nil {
+		panic(err)
+	}
+
 	r := mux.NewRouter()
 
 	r.HandleFunc("/v1/{key}", keyValuePutHandler).Methods("PUT")
